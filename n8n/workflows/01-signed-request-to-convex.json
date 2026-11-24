@@ -1,0 +1,204 @@
+{
+  "id": "llConvexRequest1",
+  "name": "LendLoop · Signed request to Convex",
+  "nodes": [
+    {
+      "id": "fb1a5f20-543f-474c-8e0e-f8ecf89ea791",
+      "name": "When called by a LendLoop workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "5dd6a4aa-4fe5-4e10-805c-754f4b27fd6b",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6b290005-b050-4684-94f2-477e25bf8a1d",
+              "name": "convexSiteUrl",
+              "value": "http://convex-backend:3211",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "2a380f81-221d-40c1-bf56-7a7c613fdabb",
+      "name": "Build signed request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Signs each request the Standard Webhooks way (https://www.standardwebhooks.com):\n// signature = HMAC-SHA256(secret, \"<id>.<timestamp>.<body>\"). The HMAC itself is\n// computed by the next node from the \"sign n8n → Convex\" credential, so the\n// secret never appears in this workflow, in env vars or in execution data.\n// Input items: { path, body, context? }. context rides along untouched.\nconst { randomUUID } = require('crypto');\nreturn $input.all().map((item) => {\n  const body = JSON.stringify(item.json.body ?? {});\n  const id = `msg_${randomUUID()}`;\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  return {\n    json: {\n      url: `${item.json.convexSiteUrl}${item.json.path}`,\n      context: item.json.context ?? null,\n      body,\n      id,\n      timestamp,\n      signedContent: `${id}.${timestamp}.${body}`,\n    },\n  };\n});\n"
+      }
+    },
+    {
+      "id": "2bb1857a-bb7f-45c5-9cd0-b1ef4c2925fe",
+      "name": "HMAC-SHA256",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.signedContent }}",
+        "dataPropertyName": "signature",
+        "encoding": "base64"
+      },
+      "credentials": {
+        "crypto": {
+          "id": "llSignForConvex1",
+          "name": "LendLoop · sign n8n → Convex"
+        }
+      }
+    },
+    {
+      "id": "82f5a9f7-b3ff-472f-b2e5-71a08531dd97",
+      "name": "POST to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "webhook-id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "webhook-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "webhook-signature",
+              "value": "=v1,{{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "28cd4661-f1ea-4129-94f8-5905c2e4dc27",
+      "name": "Return response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => ({\n  json: {\n    status: item.json.statusCode,\n    body: item.json.body,\n    context: $('Build signed request').itemMatching(index).json.context,\n  },\n}));\n"
+      }
+    }
+  ],
+  "connections": {
+    "When called by a LendLoop workflow": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Build signed request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build signed request": {
+      "main": [
+        [
+          {
+            "node": "HMAC-SHA256",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC-SHA256": {
+      "main": [
+        [
+          {
+            "node": "POST to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST to Convex": {
+      "main": [
+        [
+          {
+            "node": "Return response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "executionTimeout": 60,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

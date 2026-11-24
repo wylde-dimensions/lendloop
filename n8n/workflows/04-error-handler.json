@@ -1,0 +1,212 @@
+{
+  "id": "llErrorHandler01",
+  "name": "LendLoop · Error handler",
+  "nodes": [
+    {
+      "id": "36da6ecd-3ef7-46b7-a003-ff9e0c8e7d68",
+      "name": "When a LendLoop workflow fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b63d63eb-7dbc-4aee-9ae0-041963799b62",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "605d789e-b10a-4d30-8430-e9e76272bf04",
+              "name": "opsEmail",
+              "value": "ops@lendloop.example",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "712b8b33-c284-4365-baa2-f0a9cab97a74",
+      "name": "Summarize failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Keep the incident useful but free of personal data: names of the workflow and\n// node, a redacted error message and the execution id. No input items.\nconst { execution = {}, workflow = {}, trigger, opsEmail } = $input.first().json;\nconst raw = execution.error?.message ?? trigger?.error?.message ?? 'Unknown error';\nconst message = String(raw).replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, '[email]').slice(0, 500);\nconst executionId = execution.id ? String(execution.id) : null;\nreturn [{\n  json: {\n    opsEmail,\n    workflow: workflow.name ?? 'Unknown workflow',\n    node: execution.lastNodeExecuted ?? execution.error?.node?.name ?? null,\n    message,\n    executionId,\n    executionUrl: execution.url ?? null,\n    incidentKey: executionId ? `n8n-execution-${executionId}` : `n8n-trigger-${workflow.id}-${Date.now()}`,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "94c79dd2-85d5-4dd6-b5df-58283b30155d",
+      "name": "Compose ops email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const f = $input.first().json;\nreturn [{\n  json: {\n    to: f.opsEmail,\n    subject: `[LendLoop] n8n workflow failed: ${f.workflow}`,\n    text: [`Workflow: ${f.workflow}`, `Node: ${f.node ?? 'unknown'}`, `Error: ${f.message}`, `Execution: ${f.executionUrl ?? f.executionId ?? 'n/a'}`].join('\\n'),\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "39475844-6163-4693-ac0d-fb27e877b33c",
+      "name": "Email the ops inbox",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "fromEmail": "LendLoop <notifications@lendloop.example>",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "llSmtpMailpit001",
+          "name": "LendLoop SMTP"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2a32099b-0778-4408-a5f6-047b1f324247",
+      "name": "Prepare incident report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const f = $input.first().json;\nreturn [{\n  json: {\n    path: '/automation/incidents',\n    body: {\n      type: 'incident.report',\n      incidentKey: f.incidentKey,\n      workflow: f.workflow,\n      ...(f.node ? { node: f.node } : {}),\n      message: f.message,\n      ...(f.executionId ? { executionId: f.executionId } : {}),\n    },\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "0ffb44d3-08a4-49fa-a42a-899a54a58cfc",
+      "name": "Record incident in Convex",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "llConvexRequest1",
+          "mode": "list",
+          "cachedResultName": "LendLoop · Signed request to Convex"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "When a LendLoop workflow fails": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Summarize failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize failure": {
+      "main": [
+        [
+          {
+            "node": "Compose ops email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare incident report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose ops email": {
+      "main": [
+        [
+          {
+            "node": "Email the ops inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare incident report": {
+      "main": [
+        [
+          {
+            "node": "Record incident in Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "executionTimeout": 60,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

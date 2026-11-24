@@ -1,0 +1,6 @@
+convex/_generated
+.next
+.convex
+node_modules
+package-lock.json
+n8n/workflows

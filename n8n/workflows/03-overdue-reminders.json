@@ -1,0 +1,395 @@
+{
+  "id": "llOverdueRemind1",
+  "name": "LendLoop · Overdue reminders",
+  "nodes": [
+    {
+      "id": "1f6a0945-b78f-45a4-bafc-2d9af10ebf46",
+      "name": "Every day at 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4d993db2-c447-4784-8adf-c7a45a39c158",
+      "name": "Ask for overdue loans",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { path: '/automation/overdue-loans', body: { type: 'overdue_loans.list' } } }];\n"
+      }
+    },
+    {
+      "id": "c0171f29-cb34-4486-ad2e-5da3d3339d78",
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "llConvexRequest1",
+          "mode": "list",
+          "cachedResultName": "LendLoop · Signed request to Convex"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "dfba5159-4dff-4db1-b902-339ec9bcf531",
+      "name": "One item per loan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const { body } = $input.first().json;\nif (body.hasMore) console.log('More overdue loans than one batch; the rest are picked up on the next run.');\nreturn body.loans.map((loan) => ({\n  json: {\n    path: '/automation/reminders/claim',\n    body: { type: 'reminder.claim', loanId: loan.loanId, asOf: body.asOf, executionId: $execution.id },\n    context: loan,\n  },\n}));\n"
+      }
+    },
+    {
+      "id": "28b65c87-729e-4de4-bfd5-3460597b519c",
+      "name": "Claim reminder",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "llConvexRequest1",
+          "mode": "list",
+          "cachedResultName": "LendLoop · Signed request to Convex"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "3b4daef8-d070-408e-8d9e-256df1f6242f",
+      "name": "Claimed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "266913da-b43c-4660-b212-be78be827138",
+              "leftValue": "={{ $json.body.proceed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a5b06ef3-25de-4188-84b2-ca24577df328",
+      "name": "Skip: sent, in progress or returned",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "0f2f0783-9591-4b2b-ab6f-49e83a9081b0",
+      "name": "Compose reminder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const { context } = $json;\nconst due = new Date(`${context.dueDate}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });\nconst days = context.daysOverdue === 1 ? '1 day' : `${context.daysOverdue} days`;\nconst text = [\n  `Hi ${context.borrower.firstName},`,\n  '',\n  `The ${context.toolName} you borrowed was due back on ${due} (${days} ago).`,\n  'Please return it when you can. The lender will mark it returned, which stops these reminders.',\n  '',\n  `Your loans: ${context.link}`,\n  '',\n  'LendLoop',\n].join('\\n');\nreturn {\n  json: { to: context.borrower.email, subject: `Reminder: please return the ${context.toolName}`, text, reminderKey: context.reminderKey },\n};\n"
+      }
+    },
+    {
+      "id": "39a5380e-f3e7-4f96-b536-56276a2ccda6",
+      "name": "Send reminder",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "fromEmail": "LendLoop <notifications@lendloop.example>",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "llSmtpMailpit001",
+          "name": "LendLoop SMTP"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "c9dff4de-28f2-4f5e-a76e-e9182e56ae3a",
+      "name": "Report sent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  json: {\n    path: '/automation/reminders/result',\n    body: { type: 'reminder.result', reminderKey: $('Compose reminder').item.json.reminderKey, status: 'sent', executionId: $execution.id },\n  },\n};\n"
+      }
+    },
+    {
+      "id": "e6ec71a5-ed30-4fc3-8772-74419923188b",
+      "name": "Report failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Convex strips email addresses from the error before storing it.\nreturn {\n  json: {\n    path: '/automation/reminders/result',\n    body: {\n      type: 'reminder.result',\n      reminderKey: $('Compose reminder').item.json.reminderKey,\n      status: 'failed',\n      error: String($json.error?.message ?? $json.error ?? 'Email could not be sent').slice(0, 300),\n      executionId: $execution.id,\n    },\n  },\n};\n"
+      }
+    },
+    {
+      "id": "82a04921-242c-4f43-aefb-f81fa0fbb110",
+      "name": "Write back result",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1980,
+        -100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "llConvexRequest1",
+          "mode": "list",
+          "cachedResultName": "LendLoop · Signed request to Convex"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every day at 09:00": {
+      "main": [
+        [
+          {
+            "node": "Ask for overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask for overdue loans": {
+      "main": [
+        [
+          {
+            "node": "Fetch overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch overdue loans": {
+      "main": [
+        [
+          {
+            "node": "One item per loan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per loan": {
+      "main": [
+        [
+          {
+            "node": "Claim reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim reminder": {
+      "main": [
+        [
+          {
+            "node": "Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Compose reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip: sent, in progress or returned",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose reminder": {
+      "main": [
+        [
+          {
+            "node": "Send reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reminder": {
+      "main": [
+        [
+          {
+            "node": "Report sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report sent": {
+      "main": [
+        [
+          {
+            "node": "Write back result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report failed": {
+      "main": [
+        [
+          {
+            "node": "Write back result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "executionTimeout": 300,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "llErrorHandler01"
+  }
+}

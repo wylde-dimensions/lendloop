@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --color-paper: #faf8f3;
+  --color-surface: #ffffff;
+  --color-ink: #1c1f1b;
+  --color-muted: #646a61;
+  --color-line: #e5e1d6;
+  --color-line-strong: #cfc9b9;
+
+  --color-brand: #2e6a4f;
+  --color-brand-strong: #22513c;
+  --color-brand-soft: #e4efe8;
+
+  --color-amber: #8a5a12;
+  --color-amber-soft: #fbf0d9;
+  --color-danger: #a8261b;
+  --color-danger-soft: #fbe9e7;
+  --color-info: #285a92;
+  --color-info-soft: #e5edf7;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+  dialog::backdrop {
+    background: rgb(28 31 27 / 0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

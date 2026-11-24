@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Types, lint, tests, workflow secrets, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run check:workflows
+      - name: Build (placeholder public config; no secrets needed)
+        run: npm run build
+        env:
+          NEXT_PUBLIC_CONVEX_URL: https://example.convex.cloud
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
+          NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: "true"
+
+  integration:
+    name: Full stack (Convex + n8n + Mailpit) smoke test
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Generates throwaway secrets, starts Docker, imports + publishes the n8n
+      # workflows, deploys Convex. No Clerk keys: the signed-in app isn't exercised here.
+      - run: npm run setup
+      - run: npm run seed
+      - run: npm run smoke
+      - name: Stack logs
+        if: failure()
+        run: docker compose -f docker/compose.yml logs --tail=200
