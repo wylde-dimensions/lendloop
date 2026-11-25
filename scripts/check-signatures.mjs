@@ -6,6 +6,12 @@
 // has them. Wraps `npm audit signatures` so a failure says which package and why,
 // as an annotation on the run page, instead of only an exit code.
 //
+// Needs npm 11.11 or later (CI runs it on Node 26's). Older npm aborts the whole
+// check when a package's attestation response holds only keyless build
+// provenance and no keyed publish attestation, as CI received for
+// napi-postinstall@0.3.8 on 2026-11-25 (likely a CDN copy cached in the seconds
+// after publish). From 11.11 (pacote 21.4) npm verifies that provenance instead.
+//
 // Why one retry, and why this kind. With an empty cache (every CI run), npm
 // verifies ~150 packages' attestations in parallel, and each one finds Sigstore's
 // bundled trusted_root.json out of date, downloads the current one and copies it
@@ -37,15 +43,19 @@ const annotate = (level, title, message) => {
   if (IN_ACTIONS) console.log(`::${level} title=${escape(title)}::${escape(message)}`);
 };
 
-// npm is a .cmd shim on Windows, which Node only runs through a shell. The
-// arguments are fixed strings plus a path this script created, so nothing
-// outside it is interpolated.
-const npm = (args) =>
-  spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", args, {
-    encoding: "utf8",
-    shell: process.platform === "win32",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+// Use the npm that launched this script (`npm run check:signatures`), so the
+// version check below is about the npm that actually runs. Run directly with
+// node, it falls back to npm on PATH; that is a .cmd shim on Windows, which Node
+// only runs through a shell. The arguments are fixed strings plus a path this
+// script created, so nothing outside it is interpolated.
+const NPM_CLI = process.env.npm_execpath;
+const npm = (args) => {
+  const options = { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 };
+  if (NPM_CLI && /npm-cli\.c?js$/.test(NPM_CLI))
+    return spawnSync(process.execPath, [NPM_CLI, ...args], options);
+  const win = process.platform === "win32";
+  return spawnSync(win ? "npm.cmd" : "npm", args, { ...options, shell: win });
+};
 
 function audit(cacheDir) {
   const result = npm(["audit", "signatures", "--json", ...(cacheDir ? ["--cache", cacheDir] : [])]);
@@ -75,9 +85,20 @@ function audit(cacheDir) {
   return { ok: problems.length === 0, problems };
 }
 
+const npmVersion = npm(["--version"]).stdout.trim();
+const [major, minor] = npmVersion.split(".").map(Number);
+if (major < 11 || (major === 11 && minor < 11)) {
+  const message = `npm ${npmVersion} aborts on keyless-only attestations; run this with npm 11.11 or later.`;
+  annotate("error", "npm too old for the signature check", message);
+  console.error(`✘ ${message}`);
+  process.exit(1);
+}
+
 const first = audit();
 if (first.ok) {
-  console.log("✔ Every installed package's registry signature and attestations verified.");
+  console.log(
+    `✔ Every installed package's registry signature and attestations verified (npm ${npmVersion}).`,
+  );
   process.exit(0);
 }
 

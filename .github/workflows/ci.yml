@@ -32,10 +32,7 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm ci # .npmrc: no install scripts run
-      - name: Verify npm registry signatures and provenance
-        # Names any failing package and npm's reason as an annotation; retries once
-        # in a fresh cache. A forged signature can't pass on any attempt.
-        run: npm run check:signatures
+      # Registry signatures and provenance are checked in the `signatures` job below.
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
@@ -47,10 +44,30 @@ jobs:
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
           NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: "true"
 
+  signatures:
+    name: npm registry signatures and provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Current LTS, for the npm it ships: npm 10 (Node 22's) aborts the whole check
+      # when a package's attestations arrive as keyless provenance only; npm 11.11+
+      # verifies that provenance instead. The app itself is tested on Node 22 above.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          package-manager-cache: false
+      - run: npm ci # .npmrc: no install scripts run
+      # Names any failing package and npm's reason as an annotation; retries once
+      # in a fresh cache. A forged signature can't pass on any attempt.
+      - run: npm run check:signatures
+
   integration:
     name: Full stack (Convex + n8n + Mailpit) smoke test
     runs-on: ubuntu-latest
-    needs: checks
+    needs: [checks, signatures]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
