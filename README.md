@@ -8,7 +8,7 @@ A neighborhood tool-lending board. Neighbors list tools, request them for a date
 
 - **Quick start:** `npm run setup`, then `npm run dev`. It needs Docker and a free Clerk dev app ([details below](#quick-start)).
 - **Production notes:** [PRODUCTION.md](PRODUCTION.md) is the short note on what I'd change to run this in production.
-- **Verification:** 36 Convex tests, a 14-check smoke test that runs against the live stack, and CI that boots the whole stack on every push.
+- **Verification:** 36 Convex tests, a 14-check smoke test that runs against the live stack, and CI that boots the whole stack on every push to main and every pull request.
 
 ---
 

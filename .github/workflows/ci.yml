@@ -1,7 +1,9 @@
 name: CI
 
+# Pushes to main, and every pull request (once, not again for its branch push).
 on:
   push:
+    branches: [main]
   pull_request:
 
 # Read-only token. Forked pull requests run with no secrets (the repo has none anyway).

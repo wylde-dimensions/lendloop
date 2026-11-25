@@ -9,6 +9,13 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # Routine updates stay within the current major version. A major upgrade is a
+    # deliberate change, not a weekly chore: TypeScript 7 and ESLint 10 wait on
+    # typescript-eslint and eslint-config-next, and @types/node follows the Node 22
+    # runtime. This limit doesn't apply to security updates, which still arrive.
+    allow:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
     open-pull-requests-limit: 5
     groups:
       minor-and-patch:
