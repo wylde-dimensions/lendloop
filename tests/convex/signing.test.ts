@@ -6,6 +6,7 @@ const now = Date.UTC(2026, 5, 10, 12);
 
 describe("Standard Webhooks signing", () => {
   test("interoperates with the reference implementation in both directions", async () => {
+    // The published example secret from the Standard Webhooks spec's test vectors. Not a real secret.
     const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
     const body = JSON.stringify({ test: 2432232314 });
 

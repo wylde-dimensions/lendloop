@@ -32,7 +32,7 @@ A neighborhood tool-lending board. Neighbors list tools, request them for a date
 **You need:** Node 22+, Docker, and a Clerk application (free; [dashboard.clerk.com](https://dashboard.clerk.com) → Create application → Email).
 
 ```bash
-npm install
+npm ci   # exact versions from the lockfile; no install scripts run (see .npmrc)
 
 # 1. Your Clerk keys (Clerk dashboard → API keys). Stored in .env.local, which is git-ignored.
 node scripts/set-clerk-keys.mjs publishable pk_test_...
@@ -71,6 +71,9 @@ Useful commands:
 - `npm run stack:up` / `stack:down` / `stack:logs` manage the Docker stack.
 - `npm run smoke` runs the end-to-end check.
 - `npm run check` runs types, lint, tests and the workflow-secrets check.
+- `npm run stack:destroy -- --yes` removes everything LendLoop put on your machine: containers, volumes, images and the generated secret files.
+
+Running a stranger's take-home is a risk in itself, so this repo is built to be safe to run. Everything listens on `127.0.0.1` only, nothing runs at install time, and every image is pinned. See [Your machine and the supply chain](#your-machine-and-the-supply-chain).
 
 To try a loan end to end you need two accounts: lender and borrower. A second browser profile works, or Clerk test emails (`anything+clerk_test@example.com`, verification code `424242`).
 
@@ -358,7 +361,20 @@ webhook-signature: v1,<base64 HMAC-SHA256(secret, "<id>.<timestamp>.<raw body>")
 
 14. **Abuse limits.** Per-user token-bucket rate limits on creating listings and requesting loans (`@convex-dev/rate-limiter`, evaluated inside the transaction). Length limits and control-character stripping on all text. Loans are capped at 30 days and at most 180 days ahead.
 15. **Headers.** A Content-Security-Policy via Clerk's middleware, allowing only the Convex origin plus Clerk; `frame-ancestors 'none'`, `nosniff`, a strict referrer policy, a locked-down Permissions-Policy, and HSTS in production.
-16. **Local services bind to `127.0.0.1` only.** The n8n editor needs a login (bcrypt hash in env; no setup screen), and n8n telemetry is off.
+16. **n8n runs with only what these workflows use.** The nodes that run shell commands or read and write the container's files are excluded (`NODES_EXCLUDE`). Installing community packages from the editor is off, and so is the public REST API. The editor needs a login (bcrypt hash in env; no setup screen), and n8n telemetry is off.
+
+### Your machine and the supply chain
+
+A take-home runs on someone's own computer, next to their real accounts and keys. So the repo treats the reviewer's machine as part of the threat model, not just the app.
+
+17. **Nothing is reachable from your network.** Every Docker port binds to `127.0.0.1`, and so do `npm run dev` and `npm start` (`-H 127.0.0.1`; Next.js listens on every interface by default).
+18. **Containers get no privileges.** Every service drops all Linux capabilities and runs with `no-new-privileges`. The only host folders mounted are two folders of this repo, read-only.
+19. **The code-execution sandbox is cut off.** n8n's task runner, which runs the workflows' Code nodes, sits on an internal Docker network with a read-only filesystem and memory and process limits. Probed from inside: external DNS fails, the internet and the Docker host are unreachable, and so are Convex and Mailpit. The n8n broker is all it can reach.
+20. **You run exactly what was tested.** Images are pinned by digest, npm packages by lockfile (`npm ci`), and CI actions by commit SHA.
+21. **No third-party code runs at install time.** `.npmrc` sets `ignore-scripts`. Install scripts are how compromised npm packages usually attack developers, as the Shai-Hulud worm did. The only dependency here with one is esbuild, and it works without it. CI checks the npm registry signatures of every package (`npm audit signatures`: 596 signed, 246 with provenance attestations).
+22. **CI has nothing worth stealing.** It runs with a read-only token, doesn't keep git credentials after checkout, uses no secrets and no dependency cache, and has job timeouts. Dependabot keeps the pins current but waits until a release is a week old, since most malicious releases are pulled within days.
+23. **Patched as of 2026-11-25.** n8n 2.49.5 includes the fix for every n8n security advisory published so far, and `npm audit --omit=dev` reports no known vulnerabilities in the app's dependencies.
+24. **A clean exit.** `npm run stack:destroy -- --yes` removes the containers, volumes, images and generated secrets, then lists what only you can revoke (the Clerk app and any git token).
 
 ---
 
@@ -433,7 +449,7 @@ convex/
 n8n/workflows/           exported workflow JSON (no secrets; checked in CI)
 n8n/bootstrap/           imports credentials + workflows into n8n on `docker compose up`
 docker/compose.yml       Convex backend + dashboard, n8n + task runner, Mailpit
-scripts/                 setup, seed helpers, smoke test, workflow export/check, make-admin
+scripts/                 setup, teardown, smoke test, workflow export/check, make-admin
 tests/convex/            convex-test suites
 ```
 

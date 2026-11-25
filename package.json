@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "dev": "concurrently -k -n next,convex -c green,magenta \"next dev\" \"convex dev\"",
-    "dev:next": "next dev",
+    "dev": "concurrently -k -n next,convex -c green,magenta \"next dev -H 127.0.0.1\" \"convex dev\"",
+    "dev:next": "next dev -H 127.0.0.1",
     "dev:convex": "convex dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -22,7 +22,8 @@
     "smoke": "node scripts/smoke-test.mjs",
     "stack:up": "docker compose -f docker/compose.yml up -d --wait",
     "stack:down": "docker compose -f docker/compose.yml down",
-    "stack:logs": "docker compose -f docker/compose.yml logs -f --tail=100"
+    "stack:logs": "docker compose -f docker/compose.yml logs -f --tail=100",
+    "stack:destroy": "node scripts/teardown.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.10.8",

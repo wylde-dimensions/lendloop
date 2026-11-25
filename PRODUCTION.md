@@ -25,6 +25,13 @@ A short note on what I'd change before real neighbors' data goes in. It assumes 
 - **n8n credentials:** use n8n's external-secrets integration with Secrets Manager. Otherwise CI provisions them through the n8n API, as `n8n/bootstrap` does locally.
 - **Rotation:** rotate the two signing secrets on a schedule using the `*_PREVIOUS` overlap the code already supports. Rotate `N8N_ENCRYPTION_KEY` only with a re-encrypt plan.
 
+## Supply chain
+
+- **Keep the local defaults:** images pinned by digest, actions by SHA, `npm ci` with install scripts off, and a cooldown on Dependabot updates.
+- **Pull images through a private registry (ECR)** with pull-through caching and scanning (Inspector), so production never depends on Docker Hub or GHCR at deploy time.
+- **Lock down outbound traffic from n8n.** Allow only SES and the Convex deployment from its security group. The task runners get no outbound access at all, as in the local compose file.
+- **Generate an SBOM per release** and keep it with the build, so a newly announced vulnerability can be checked against what's actually deployed.
+
 ## Reliability
 
 - **Close the notification dedupe window.** Move it into Convex: n8n claims an `eventId` before sending, like reminders. Or use a shared store (Redis or n8n Data Tables) with an atomic insert.

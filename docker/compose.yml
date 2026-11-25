@@ -1,14 +1,29 @@
 # LendLoop local stack: Convex (self-hosted), n8n with an external task runner,
-# and Mailpit as a fake inbox. Everything binds to 127.0.0.1 only.
+# and Mailpit as a fake inbox.
 #
-#   npm run setup       generates docker/.env, starts this stack, deploys Convex
-#   npm run stack:up    starts it again later (stack:down / stack:logs)
+#   npm run setup          generates docker/.env, starts this stack, deploys Convex
+#   npm run stack:up       starts it again later (stack:down / stack:logs)
+#   npm run stack:destroy  removes containers, volumes, images and local secrets
 #
 # Secrets come from docker/.env (generated, git-ignored). It lives here, not in
 # the repo root, so Next.js (which loads ./.env) never sees them. Nothing secret
 # is in this file or in n8n/workflows/*.json.
+#
+# Safe to run on your own machine:
+#   - Every published port binds to 127.0.0.1, so nothing is reachable from your network.
+#   - Images are pinned by digest: you run exactly the bytes this repo was tested with.
+#   - No container gets extra privileges: all Linux capabilities dropped, no-new-privileges.
+#   - The task runner, which executes the workflows' Code nodes, sits on an internal
+#     network: it can reach n8n and nothing else (no internet, no host).
+#   - Nothing mounts your files except two read-only folders of this repo.
 
 name: lendloop
+
+x-hardened: &hardened
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
 
 x-n8n-env: &n8n-env
   DB_TYPE: sqlite
@@ -20,7 +35,7 @@ x-n8n-env: &n8n-env
   N8N_PORT: "5678"
   N8N_PROTOCOL: http
   WEBHOOK_URL: http://localhost:5678/
-  N8N_SECURE_COOKIE: "false"
+  N8N_SECURE_COOKIE: "false" # plain http on localhost; production runs behind TLS
   # Owner account managed from env, so there is no setup screen. Bcrypt hash only.
   N8N_INSTANCE_OWNER_MANAGED_BY_ENV: "true"
   N8N_INSTANCE_OWNER_EMAIL: ${N8N_OWNER_EMAIL:-owner@lendloop.example}
@@ -29,15 +44,22 @@ x-n8n-env: &n8n-env
   N8N_INSTANCE_OWNER_PASSWORD_HASH: ${N8N_OWNER_PASSWORD_HASH:?run npm run setup to generate .env}
   # Code nodes run in the separate n8n-runner container (n8n's recommended mode).
   N8N_RUNNERS_MODE: external
-  N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
+  N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0 # inside the container; port 5679 is never published
   N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?run npm run setup to generate .env}
   N8N_RUNNERS_TASK_TIMEOUT: "60"
   # Secure defaults kept on purpose: workflows can't read env vars; secrets live in credentials.
   N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+  # Attack surface these workflows don't need, switched off:
+  #   nodes that run shell commands or touch the container's files,
+  #   installing community packages (npm code) from the editor, and the public REST API.
+  NODES_EXCLUDE: '["n8n-nodes-base.executeCommand","n8n-nodes-base.localFileTrigger","n8n-nodes-base.readWriteFile"]'
+  N8N_COMMUNITY_PACKAGES_ENABLED: "false"
+  N8N_PUBLIC_API_DISABLED: "true"
   # Executions hold personal data (emails), so keep them briefly. Workflows also
   # opt out of saving successful runs (see their settings).
   EXECUTIONS_DATA_PRUNE: "true"
   EXECUTIONS_DATA_MAX_AGE: "168"
+  # No phoning home.
   N8N_DIAGNOSTICS_ENABLED: "false"
   N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
   N8N_PERSONALIZATION_ENABLED: "false"
@@ -45,7 +67,9 @@ x-n8n-env: &n8n-env
 
 services:
   convex-backend:
-    image: ghcr.io/convex/convex-backend:${CONVEX_BACKEND_TAG:-latest}
+    <<: *hardened
+    # Convex publishes rolling builds; this is the build the repo was tested with.
+    image: ghcr.io/convex/convex-backend@sha256:d4e012c68640830310139632481f8d1c1915bdf66de5c3a594a99799eab51679
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -67,7 +91,8 @@ services:
       start_period: 10s
 
   convex-dashboard:
-    image: ghcr.io/convex/convex-dashboard:${CONVEX_DASHBOARD_TAG:-latest}
+    <<: *hardened
+    image: ghcr.io/convex/convex-dashboard@sha256:2cb0f7e51597ea41d08147649f9f65cb2676aa96ce1f2fce1531116a408e1c98
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -79,7 +104,8 @@ services:
         condition: service_healthy
 
   mailpit:
-    image: axllent/mailpit:${MAILPIT_TAG:-latest}
+    <<: *hardened
+    image: axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
     ports:
       - "127.0.0.1:8025:8025" # web inbox; SMTP (1025) stays on the internal network
     environment:
@@ -90,7 +116,8 @@ services:
   # One-shot: imports credentials (built from .env, encrypted by n8n on import)
   # and the workflows in n8n/workflows, then publishes them. Runs before n8n.
   n8n-bootstrap:
-    image: n8nio/n8n:${N8N_TAG:-2.49.5}
+    <<: *hardened
+    image: n8nio/n8n:2.49.5@sha256:c349b24d6e242b4ea14d75e6f1a90c50e348cf4b1c4512b4a0a50219ead6533d
     entrypoint: ["node", "/bootstrap/bootstrap.mjs"]
     restart: "no"
     environment:
@@ -107,7 +134,8 @@ services:
       - ../n8n/bootstrap:/bootstrap:ro
 
   n8n:
-    image: n8nio/n8n:${N8N_TAG:-2.49.5}
+    <<: *hardened
+    image: n8nio/n8n:2.49.5@sha256:c349b24d6e242b4ea14d75e6f1a90c50e348cf4b1c4512b4a0a50219ead6533d
     restart: unless-stopped
     ports:
       - "127.0.0.1:5678:5678"
@@ -115,6 +143,9 @@ services:
       <<: *n8n-env
     volumes:
       - n8n-data:/home/node/.n8n
+    networks:
+      - default
+      - runner
     depends_on:
       n8n-bootstrap:
         condition: service_completed_successfully
@@ -125,15 +156,30 @@ services:
       interval: 5s
       start_period: 20s
 
+  # Executes the workflows' Code nodes. Isolated on purpose: its only network is
+  # `runner`, which has no route out, and its filesystem is read-only.
   n8n-runner:
-    image: n8nio/runners:${N8N_TAG:-2.49.5}
+    <<: *hardened
+    image: n8nio/runners:2.49.5@sha256:6acde3e86f55a343970affdb897f4f225212a73f9f2d7cac1db3c3cb1c16495f
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    pids_limit: 256
+    networks:
+      - runner
     environment:
       N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN}
       N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679
       N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT: "15"
     depends_on:
       - n8n
+
+networks:
+  default: {}
+  runner:
+    internal: true
 
 volumes:
   convex-data:
