@@ -46,7 +46,7 @@
     "bcryptjs": "^3.0.3",
     "concurrently": "^10.0.7",
     "convex-test": "^0.0.75",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.4.6",
     "prettier": "^3.10.1",
     "standardwebhooks": "^1.3.0",
