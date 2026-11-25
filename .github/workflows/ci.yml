@@ -33,7 +33,9 @@ jobs:
           package-manager-cache: false
       - run: npm ci # .npmrc: no install scripts run
       - name: Verify npm registry signatures and provenance
-        run: npm audit signatures
+        # Fetches keys and attestations over the network, so one retry absorbs a
+        # registry blip. A bad signature fails both attempts.
+        run: npm audit signatures || { sleep 15; npm audit signatures; }
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
