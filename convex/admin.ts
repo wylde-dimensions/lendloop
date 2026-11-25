@@ -343,7 +343,7 @@ export const setRole = internalMutation({
         actorId: undefined,
         action: "user.role_changed",
         targetId: user._id,
-        details: `â†’ ${role}`,
+        details: `→ ${role}`,
       });
     }
     return `${user.firstName} is now ${role}.`;

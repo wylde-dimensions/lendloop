@@ -18,11 +18,11 @@ import { rateLimiter } from "./rateLimits";
  * Loan state machine. Every transition checks, inside Convex, that the viewer is
  * the right party for it:
  *
- *   request       borrower (anyone but the owner)   â†’  requested
- *   approve       lender (tool owner)               requested â†’ approved
- *   decline       lender                            requested â†’ declined
- *   cancel        borrower                          requested â†’ cancelled
- *   markReturned  lender                            approved  â†’ returned
+ *   request       borrower (anyone but the owner)   →  requested
+ *   approve       lender (tool owner)               requested → approved
+ *   decline       lender                            requested → declined
+ *   cancel        borrower                          requested → cancelled
+ *   markReturned  lender                            approved  → returned
  *
  * Each transition writes an audit entry and queues a notification in the same
  * transaction.

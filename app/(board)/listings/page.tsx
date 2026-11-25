@@ -3,6 +3,10 @@ import { MyListings } from "@/components/tools/my-listings";
 
 export const metadata: Metadata = { title: "My listings" };
 
+// Behind sign-in (app/(board)/layout.tsx), so there is no static version of this page
+// for Next.js to validate instant navigation against. Opting out is the documented fix.
+export const instant = false;
+
 export default function ListingsPage() {
   return <MyListings />;
 }

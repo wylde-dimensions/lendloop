@@ -16,6 +16,9 @@ export default clerkMiddleware({
   contentSecurityPolicy: {
     directives: {
       "connect-src": convexOrigins,
+      // Clerk's components draw some decoration as inline SVG images. A data: image
+      // can't run script or reach the network, so this widens nothing that matters.
+      "img-src": ["data:"],
       "frame-ancestors": ["'none'"],
       "form-action": ["'self'"],
       "base-uri": ["'self'"],

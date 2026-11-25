@@ -29,7 +29,7 @@ A neighborhood tool-lending board. Neighbors list tools, request them for a date
 
 ## Quick start
 
-**You need:** Node 22+, Docker, and a Clerk application (free; [dashboard.clerk.com](https://dashboard.clerk.com) → Create application → Email).
+**You need:** Node 22+, Docker, and a Clerk application (free; [dashboard.clerk.com](https://dashboard.clerk.com) → Create application → Email). Neighbors see each other by first name, so turn on _First and last name_ in the app's user settings. Without it, sign-up asks only for an email and everyone appears as "Neighbor".
 
 ```bash
 npm ci   # exact versions from the lockfile; no install scripts run (see .npmrc)
@@ -73,7 +73,7 @@ Useful commands:
 - `npm run check` runs types, lint, tests and the workflow-secrets check.
 - `npm run stack:destroy -- --yes` removes everything LendLoop put on your machine: containers, volumes, images and the generated secret files.
 
-Running a stranger's take-home is a risk in itself, so this repo is built to be safe to run. Everything listens on `127.0.0.1` only, nothing runs at install time, and every image is pinned. See [Your machine and the supply chain](#your-machine-and-the-supply-chain).
+Running a stranger's take-home is a risk in itself, so this repo is built to be safe to run. Everything listens only on your own machine (loopback), nothing runs at install time, and every image is pinned. See [Your machine and the supply chain](#your-machine-and-the-supply-chain).
 
 To try a loan end to end you need two accounts: lender and borrower. A second browser profile works, or Clerk test emails (`anything+clerk_test@example.com`, verification code `424242`).
 
@@ -367,7 +367,7 @@ webhook-signature: v1,<base64 HMAC-SHA256(secret, "<id>.<timestamp>.<raw body>")
 
 A take-home runs on someone's own computer, next to their real accounts and keys. So the repo treats the reviewer's machine as part of the threat model, not just the app.
 
-17. **Nothing is reachable from your network.** Every Docker port binds to `127.0.0.1`, and so do `npm run dev` and `npm start` (`-H 127.0.0.1`; Next.js listens on every interface by default).
+17. **Nothing is reachable from your network.** Every Docker port binds to `127.0.0.1`. `npm run dev` and `npm start` bind to `localhost` (`-H localhost`), because Next.js otherwise listens on every interface. It's `localhost` rather than `127.0.0.1` because Next.js must see the same host name the browser uses. With a mismatch, it treats Clerk's same-page rewrite as another site and proxies it, and every page fails.
 18. **Containers get no privileges.** Every service drops all Linux capabilities and runs with `no-new-privileges`. The only host folders mounted are two folders of this repo, read-only.
 19. **The code-execution sandbox is cut off.** n8n's task runner, which runs the workflows' Code nodes, sits on an internal Docker network with a read-only filesystem and memory and process limits. Probed from inside: external DNS fails, the internet and the Docker host are unreachable, and so are Convex and Mailpit. The n8n broker is all it can reach.
 20. **You run exactly what was tested.** Images are pinned by digest, npm packages by lockfile (`npm ci`), and CI actions by commit SHA.
@@ -426,7 +426,8 @@ The Convex variables are declared and typed in `convex/convex.config.ts`. A depl
 
 **Also verified by hand on the running stack:**
 
-- The overdue workflow, run twice: one email, one `sent` record, nothing on the second run.
+- The whole loop in the browser as two Clerk test users. A lender lists a tool and a borrower requests it, and the lender gets the email. The lender approves, and the borrower gets the email. The lender marks it returned, and the borrower gets a receipt. Each step shows on the loan's activity timeline. Then the admin page: marking a Trusted Lender, and the audit log.
+- The overdue workflow, run twice: one email, one `sent` record, nothing on the second run. It also fires on its own at 09:00.
 - Stopping Mailpit mid-notification: the webhook returns 500, the error workflow fires, and the incident appears in Convex.
 
 ---
