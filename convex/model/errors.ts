@@ -5,7 +5,7 @@ import { ConvexError } from "convex/values";
  * reaches the client as a generic "Server Error" with no internals.
  */
 export type AppErrorCode =
-  "UNAUTHENTICATED" | "NOT_PROVISIONED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "INVALID";
+  "UNAUTHENTICATED" | "NOT_PROVISIONED" | "FORBIDDEN" | "MFA_REQUIRED" | "NOT_FOUND" | "CONFLICT" | "INVALID";
 
 export type AppErrorData = { code: AppErrorCode; message: string };
 

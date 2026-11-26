@@ -23,6 +23,13 @@ const app = defineApp({
     LENDLOOP_N8N_TO_CONVEX_SECRET: v.optional(v.string()),
     /** Previous n8n → Convex secret, accepted during a key rotation. */
     LENDLOOP_N8N_TO_CONVEX_SECRET_PREVIOUS: v.optional(v.string()),
+    /**
+     * "true": admin functions also require the session to have passed a second
+     * factor (Clerk's `fva` claim). Set in production; off locally so reviewers
+     * don't need MFA set up. Needs Clerk's Convex integration (session token),
+     * since a JWT template can't carry `fva`.
+     */
+    LENDLOOP_ADMIN_REQUIRE_MFA: v.optional(v.string()),
   },
 });
 app.use(rateLimiter);

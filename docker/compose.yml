@@ -126,6 +126,8 @@ services:
       LENDLOOP_N8N_TO_CONVEX_SECRET: ${LENDLOOP_N8N_TO_CONVEX_SECRET:?run npm run setup to generate .env}
       LENDLOOP_CONVEX_SITE_URL: ${LENDLOOP_CONVEX_SITE_URL_FOR_N8N:-http://convex-backend:3211}
       LENDLOOP_OPS_EMAIL: ${LENDLOOP_OPS_EMAIL:-ops@lendloop.example}
+      # Test hook (CI): run the daily reminder workflow on this cron schedule instead.
+      LENDLOOP_REMINDER_SCHEDULE: ${LENDLOOP_REMINDER_SCHEDULE:-}
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
     volumes:

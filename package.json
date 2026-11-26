@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "check:workflows": "node scripts/check-workflows.mjs",
     "check:signatures": "node scripts/check-signatures.mjs",
+    "check:csp": "node scripts/check-csp.mjs",
     "check": "npm run typecheck \u0026\u0026 npm run lint \u0026\u0026 npm run test \u0026\u0026 npm run check:workflows",
     "make-admin": "node scripts/make-admin.mjs",
     "format": "prettier --write .",

@@ -18,6 +18,10 @@ A short note on what I'd change before real neighbors' data goes in. It assumes 
 - **The n8n editor is private** (VPN or SSO, never public), with n8n SSO/RBAC for operators.
 - **Convex → n8n can stay on private networking** when both are self-hosted. With Convex Cloud, the HMAC signature and timestamp window are the gate.
 - **Production Clerk instance** on your own domain, with MFA available. Use **Clerk Organizations** for B2B tenancy and roles. Today's single global `admin` would become per-organization roles, still enforced in Convex.
+- **Admins must use a second factor:**
+  - Set `LENDLOOP_ADMIN_REQUIRE_MFA=true` on the Convex deployment, and turn on an authenticator app in Clerk.
+  - Connect Clerk and Convex through Clerk's Convex integration, not the `convex` JWT template, because only the session token carries the `fva` claim the check reads.
+  - Set Clerk's session lifetime and inactivity timeout, so an admin session doesn't last forever.
 
 ## Secrets
 
@@ -44,6 +48,7 @@ A short note on what I'd change before real neighbors' data goes in. It assumes 
 - **Datadog** for logs, metrics and alerts. Convex log streaming ships the structured JSON logs the functions already emit (`notification.delivered`, `notification.dead_lettered`, `automation.request_rejected`…). n8n logs and metrics (`N8N_METRICS=true`) go there too, through the Datadog agent on ECS.
 - **Sentry** on the Next.js client and server, scrubbed of personal data.
 - **CloudTrail** for every AWS API call (secret reads, IAM changes), alongside the app's own audit log.
+- **Anchor the audit chain outside Convex.** The hash chain shows whether entries were edited or removed. On a schedule, write the newest entry's `seq` and `hash` to an **S3 bucket with Object Lock** (write-once), and run `admin:verifyAuditChain` against those anchors. Then even someone holding the deploy key can't rewrite or truncate the log without it showing.
 
 ## Privacy and compliance
 

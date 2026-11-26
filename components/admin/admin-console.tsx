@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import { api } from "@/convex/_generated/api";
@@ -30,6 +31,15 @@ export function AdminConsole() {
       <EmptyState title="Admins only">
         This page is for LendLoop admins. Your data is safe either way: every admin action is checked on the
         server.
+      </EmptyState>
+    );
+  }
+
+  if (me.adminNeedsMfa) {
+    return (
+      <EmptyState title="Turn on two-step verification">
+        Admin actions need a second factor on this deployment. Open your account menu (top right), choose
+        Manage account → Security and add an authenticator app. Then sign out and sign in again with it.
       </EmptyState>
     );
   }
@@ -454,8 +464,35 @@ function PeoplePanel() {
 
 function AuditPanel() {
   const entries = useQuery(api.admin.auditLog);
+  const integrity = useQuery(api.admin.auditIntegrity);
   if (!entries) return <ListSkeleton rows={3} label="Loading audit log" />;
   if (entries.length === 0) return <EmptyState title="Nothing logged yet" />;
+  return (
+    <>
+      {integrity && integrity.checked > 0 ? (
+        <p
+          role="status"
+          className={cn(
+            "mb-3 flex items-center gap-2 text-sm",
+            integrity.intact ? "text-muted" : "font-medium text-danger",
+          )}
+        >
+          {integrity.intact ? (
+            <CheckCircle2 className="size-4 text-brand" aria-hidden />
+          ) : (
+            <AlertTriangle className="size-4" aria-hidden />
+          )}
+          {integrity.intact
+            ? `Hash chain verified over the latest ${integrity.checked} entries: nothing edited or removed.`
+            : `Hash chain broken at entry #${integrity.brokenAtSeq}: an entry was edited, removed or reordered.`}
+        </p>
+      ) : null}
+      <AuditTable entries={entries} />
+    </>
+  );
+}
+
+function AuditTable({ entries }: { entries: FunctionReturnType<typeof api.admin.auditLog> }) {
   return (
     <TableFrame>
       <table className={tableClass}>

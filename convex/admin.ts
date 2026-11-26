@@ -1,10 +1,10 @@
 import { v } from "convex/values";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { internal } from "./_generated/api";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { appError } from "./model/errors";
-import { audit } from "./model/audit";
+import { audit, verifyChain } from "./model/audit";
 import { adminMutation, adminQuery } from "./model/functions";
 import { today as appToday } from "./model/config";
 import { closeLoansForRemovedTool } from "./model/loans";
@@ -318,6 +318,61 @@ export const auditLog = adminQuery({
         };
       }),
     );
+  },
+});
+
+const vChainReport = v.object({
+  checked: v.number(),
+  intact: v.boolean(),
+  brokenAtSeq: v.optional(v.number()),
+  lastSeq: v.optional(v.number()),
+});
+
+/** How many recent entries the admin page re-verifies on every load. */
+const AUDIT_VERIFY_WINDOW = 500;
+
+/** Re-checks the hash chain over the most recent audit entries (shown on /admin). */
+export const auditIntegrity = adminQuery({
+  args: {},
+  returns: vChainReport,
+  handler: async (ctx) => {
+    const recent = (
+      await ctx.db
+        .query("auditLog")
+        .withIndex("by_seq", (q) => q.gte("seq", 1))
+        .order("desc")
+        .take(AUDIT_VERIFY_WINDOW + 1)
+    ).reverse();
+    if (recent.length === 0) return { checked: 0, intact: true };
+    // The oldest entry fetched anchors the window, unless the window starts the chain.
+    return recent[0].seq === 1
+      ? await verifyChain(recent, null)
+      : await verifyChain(recent.slice(1), recent[0]);
+  },
+});
+
+/**
+ * Full check of the chain, page by page, for an operator with deploy access:
+ *   npx convex run admin:verifyAuditChain '{}'
+ *   npx convex run admin:verifyAuditChain '{"afterSeq": 2000}'
+ */
+export const verifyAuditChain = internalQuery({
+  args: { afterSeq: v.optional(v.number()), limit: v.optional(v.number()) },
+  returns: vChainReport,
+  handler: async (ctx, { afterSeq = 0, limit = 2000 }) => {
+    const before =
+      afterSeq > 0
+        ? await ctx.db
+            .query("auditLog")
+            .withIndex("by_seq", (q) => q.eq("seq", afterSeq))
+            .unique()
+        : null;
+    if (afterSeq > 0 && !before) return { checked: 0, intact: false, brokenAtSeq: afterSeq };
+    const entries = await ctx.db
+      .query("auditLog")
+      .withIndex("by_seq", (q) => q.gt("seq", afterSeq))
+      .take(Math.min(Math.max(1, limit), 4000));
+    return await verifyChain(entries, before);
   },
 });
 

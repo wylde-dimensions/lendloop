@@ -21,6 +21,11 @@ export function outgoingWebhook(): { url: string; secret: string } | null {
   return url && secret ? { url, secret } : null;
 }
 
+/** Whether admin functions require a session that passed a second factor. */
+export function adminMfaRequired(): boolean {
+  return env.LENDLOOP_ADMIN_REQUIRE_MFA === "true";
+}
+
 /** Secrets accepted on incoming (n8n → Convex) calls: current first, then previous. */
 export function incomingSecrets(): string[] {
   return [env.LENDLOOP_N8N_TO_CONVEX_SECRET, env.LENDLOOP_N8N_TO_CONVEX_SECRET_PREVIOUS].filter(

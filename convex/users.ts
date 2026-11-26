@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { UserIdentity } from "convex/server";
 import { mutation } from "./_generated/server";
 import { appError } from "./model/errors";
-import { findViewer, publicQuery } from "./model/functions";
+import { adminNeedsSecondFactor, findViewer, publicQuery } from "./model/functions";
 import { vRole } from "./model/validators";
 
 const FIRST_NAME_MAX = 40;
@@ -51,7 +51,10 @@ export const ensure = mutation({
   },
 });
 
-/** The signed-in person as the UI needs them, or null before `ensure` has run. */
+/**
+ * The signed-in person as the UI needs them, or null before `ensure` has run.
+ * `adminNeedsMfa` tells an admin to add a second factor before admin pages work.
+ */
 export const me = publicQuery({
   args: {},
   returns: v.union(
@@ -60,15 +63,18 @@ export const me = publicQuery({
       firstName: v.string(),
       role: vRole,
       isTrustedLender: v.boolean(),
+      adminNeedsMfa: v.boolean(),
     }),
   ),
   handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
     const viewer = await findViewer(ctx);
-    if (!viewer) return null;
+    if (!identity || !viewer) return null;
     return {
       firstName: viewer.firstName,
       role: viewer.role,
       isTrustedLender: viewer.trustedLenderSince !== undefined,
+      adminNeedsMfa: adminNeedsSecondFactor(identity, viewer),
     };
   },
 });

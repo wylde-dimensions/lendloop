@@ -1,0 +1,18 @@
+# Secret scan of the whole git history (CI: the `secrets` job). Gitleaks' default
+# rules, plus three exact allowances. Each was checked by hand: none is a secret.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Code that reads a secret from the environment holds no secret itself"
+regexTarget = "line"
+regexes = ['''=\s*env\.[A-Z0-9_]+;''']
+
+[[allowlists]]
+description = "CI build placeholder: a publishable key (public by design) for example.clerk.accounts.dev"
+regexes = ['''pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk''']
+
+[[allowlists]]
+description = "The Standard Webhooks spec's published test-vector secret, used in tests/convex/signing.test.ts"
+regexes = ['''whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw''']

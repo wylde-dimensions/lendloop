@@ -3,11 +3,20 @@
 //
 // Plays Convex's part against the live n8n webhook and n8n's part against the
 // live Convex endpoints, and checks every security and idempotency promise the
-// README makes. Needs no Clerk account. Exits non-zero on the first failure.
+// README makes. Needs no Clerk account. Exits non-zero if any check fails.
+//
+//   npm run smoke -- --workflows
+//
+// Also runs the reminder and error workflows for real, as production executions
+// inside n8n. CI uses it. It needs the demo data (npm run seed) and the stack
+// set up with LENDLOOP_REMINDER_SCHEDULE="* * * * *", so the daily reminder
+// runs every minute. It stops Mailpit briefly to make a workflow fail.
 
+import { execFileSync } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
 import { readEnvFile } from "./lib/env-file.mjs";
 
+const WORKFLOWS = process.argv.includes("--workflows");
 const env = readEnvFile("docker/.env");
 const N8N_WEBHOOK = "http://localhost:5678/webhook/lendloop/loan-events";
 const CONVEX_SITE = "http://127.0.0.1:3211";
@@ -157,5 +166,115 @@ const result = JSON.stringify({
 r = await post(`${CONVEX_SITE}/automation/reminders/result`, result, signed(toConvexSecret, result));
 check("a result for a reminder that was never claimed is refused (409)", r.status === 409, `got ${r.status}`);
 
+if (WORKFLOWS) await realWorkflows();
+
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll checks passed.");
 process.exit(failures ? 1 : 0);
+
+// ── The reminder and error workflows, run for real inside n8n ─────────────
+async function realWorkflows() {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const win = process.platform === "win32";
+  // Reads a Convex table with the deploy key in .env.local (fixed arguments only).
+  const table = (name) =>
+    execFileSync(
+      win ? "npx.cmd" : "npx",
+      ["convex", "data", name, "--format", "jsonLines", "--limit", "50"],
+      {
+        encoding: "utf8",
+        shell: win,
+      },
+    )
+      .split("\n")
+      .filter((line) => line.trim().startsWith("{"))
+      .map((line) => JSON.parse(line));
+  const compose = (...args) =>
+    execFileSync("docker", ["compose", "-f", "docker/compose.yml", ...args], { stdio: "ignore" });
+  const mail = async (query) =>
+    (await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(query)}`)).json()).messages ??
+    [];
+  async function until(what, seconds, probe) {
+    for (const deadline = Date.now() + seconds * 1000; Date.now() < deadline; await sleep(3000)) {
+      const value = await probe();
+      if (value) return value;
+    }
+    console.log(`    (gave up waiting for ${what} after ${seconds} s)`);
+    return null;
+  }
+
+  console.log("\nOverdue reminders workflow (a real scheduled run)");
+  // The seeded overdue loan: Sam borrowed Priya's pressure washer.
+  const sent = await until("a reminder written back as sent", 150, () =>
+    table("reminders").find((row) => row.status === "sent" && row.sentAt > Date.now() - 15 * 60_000),
+  );
+  check(
+    "the scheduled run claimed, emailed and wrote back the overdue reminder (sent)",
+    Boolean(sent?.executionId),
+    "no reminder marked sent by an n8n execution",
+  );
+  if (sent) {
+    const sinceSent = (messages) => messages.filter((m) => Date.parse(m.Created) >= sent.claimedAt - 60_000);
+    const reminders = sinceSent(await mail('to:sam@lendloop.example subject:"Reminder: please return"'));
+    check(
+      "exactly one reminder email reached the borrower",
+      reminders.length === 1,
+      `found ${reminders.length}`,
+    );
+    if (reminders[0]) {
+      const message = await (await fetch(`${MAILPIT}/api/v1/message/${reminders[0].ID}`)).json();
+      check(
+        "it carries no internal ids",
+        !message.Text.includes(sent.loanId) && !message.Text.includes(sent.reminderKey),
+      );
+    }
+
+    // The next scheduled runs see the reminder as sent and skip it.
+    const wait = sent.sentAt + 75_000 - Date.now();
+    if (wait > 0) await sleep(wait);
+    const again = sinceSent(await mail('to:sam@lendloop.example subject:"Reminder: please return"'));
+    const row = table("reminders").find((r) => r.reminderKey === sent.reminderKey);
+    check(
+      "a later scheduled run sends no second reminder",
+      again.length === 1 && row?.attempts === 1 && row?.status === "sent",
+      `emails ${again.length}, attempts ${row?.attempts}, status ${row?.status}`,
+    );
+  }
+
+  console.log("\nError workflow (a production run that fails)");
+  const startedAt = Date.now();
+  const failing = JSON.stringify({ ...JSON.parse(event), eventId: `evt_smoke_fail_${startedAt}` });
+  compose("stop", "mailpit");
+  try {
+    r = await post(N8N_WEBHOOK, failing, signed(toN8nSecret, failing, { id: `evt_smoke_fail_${startedAt}` }));
+    check(
+      "with the mail server down, the notification run fails with a 5xx (so Convex retries)",
+      r.status >= 500,
+      `got ${r.status} ${r.text.slice(0, 200)}`,
+    );
+  } finally {
+    compose("start", "mailpit");
+    await until("Mailpit to come back", 60, () =>
+      fetch(`${MAILPIT}/api/v1/info`).then(
+        (res) => res.ok,
+        () => false,
+      ),
+    );
+  }
+  const incident = await until("the incident in Convex", 60, () =>
+    table("automationIncidents").find(
+      (row) => row.occurredAt >= startedAt && row.workflow === "LendLoop · Loan notifications",
+    ),
+  );
+  check(
+    "the error workflow recorded the failure as an incident in Convex",
+    Boolean(incident),
+    "no new incident for the notifications workflow",
+  );
+  if (incident) {
+    check(
+      "the incident names the node and holds no email address",
+      Boolean(incident.node) && !/@/.test(incident.message),
+      JSON.stringify(incident),
+    );
+  }
+}

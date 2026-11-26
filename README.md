@@ -8,7 +8,7 @@ A neighborhood tool-lending board. Neighbors list tools, request them for a date
 
 - **Quick start:** `npm run setup`, then `npm run dev`. It needs Docker and a free Clerk dev app ([details below](#quick-start)).
 - **Production notes:** [PRODUCTION.md](PRODUCTION.md) is the short note on what I'd change to run this in production.
-- **Verification:** 36 Convex tests, a 14-check smoke test that runs against the live stack, and CI that boots the whole stack on every push to main and every pull request.
+- **Verification:** 43 Convex tests, plus a 21-check smoke test against the live stack, including real scheduled and failing n8n runs. CI boots the whole stack on every push to main and every pull request, and also checks the CSP, scans the history for secrets and runs CodeQL.
 
 ---
 
@@ -128,7 +128,7 @@ The two halves of the integration have to reach each other: Convex calls n8n's w
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Admin can remove any listing, view all loans, and mark Trusted Lenders | `convex/admin.ts`, `/admin`                                              |
 | User can only touch their own listings, requests and loans             | Checked in every Convex function; see [Roles](#roles-and-access-control) |
-| Enforced in Convex, not only in the UI                                 | `convex/model/functions.ts` (custom function builders). 10 access tests. |
+| Enforced in Convex, not only in the UI                                 | `convex/model/functions.ts` (custom function builders). 12 access tests. |
 
 **Automation with n8n**
 
@@ -243,6 +243,7 @@ Every public Convex function is built with one of five builders in `convex/model
 A few details that matter:
 
 - **Roles come from Convex,** not from the client or a JWT claim. `users.ensure` always creates new users as `user`.
+- **Admins can be required to use a second factor** (`LENDLOOP_ADMIN_REQUIRE_MFA`, on in production). The check sits in the same builders as the role check. See [Security](#security-and-data-minimization).
 - **Hidden existence:** someone outside a loan gets `NOT_FOUND`, not `FORBIDDEN`, so loan ids can't be probed.
 - **Server-side checks:** dates, lengths, overlaps and state transitions are all checked on the server. The UI repeats some checks only so people see problems early.
 
@@ -339,6 +340,8 @@ webhook-signature: v1,<base64 HMAC-SHA256(secret, "<id>.<timestamp>.<raw body>")
 
 1. **Authorization lives in Convex,** in shared builders, and is tested per role (`tests/convex/access.test.ts`). The UI hides what you can't do; the server refuses it.
 2. **No path from the app to admin.** Roles live in the Convex `users` table and change only through an internal function that needs the deployment's admin key. New users are always `user`.
+   - **Admins can be required to use a second factor.** Set `LENDLOOP_ADMIN_REQUIRE_MFA=true` on the Convex deployment. Then every admin function, in the same builder that checks the role, also refuses a session that hasn't passed a second factor (Clerk's `fva` claim), with `MFA_REQUIRED`. The admin page explains how to turn it on.
+   - It's **off locally**, so reviewers don't need MFA set up, and on in [production](PRODUCTION.md). It needs Clerk's Convex integration (a session token), because a JWT template can't carry `fva`.
 3. **Only verified emails are stored** (`email_verified` from Clerk). Notifications never go to an unproven address.
 
 **What leaves Convex, and what's stored**
@@ -349,7 +352,10 @@ webhook-signature: v1,<base64 HMAC-SHA256(secret, "<id>.<timestamp>.<raw body>")
 7. **The outbox holds no personal data.** Payloads are built at send time from current records, so a changed email is used and nothing is duplicated into a queue.
 8. **Errors are redacted before storage.** Email addresses in SMTP or n8n errors become `[email]`, and messages are capped in length (reminders and incidents).
 9. **Short execution retention.** Workflows that touch personal data keep _no_ successful executions (`saveDataSuccessExecution: none`) and keep failed ones for 7 days (`EXECUTIONS_DATA_MAX_AGE=168`), long enough to debug.
-10. **The audit log stores ids, not people:** actor id, action, target id and a short machine-readable detail.
+10. **The audit log stores ids, not people:** actor id, action, target id and a short machine-readable detail. It is also **tamper-evident**:
+    - **How:** every entry carries a sequence number, the previous entry's hash and its own SHA-256 over all of that. Editing, deleting or reordering an entry breaks the chain from that point. Re-hashing one edited entry doesn't help either, because the next entry still points at the old hash.
+    - **Where it's checked:** `/admin` re-verifies the latest 500 entries on every load and says where the chain breaks. `npx convex run admin:verifyAuditChain` checks all of it, page by page.
+    - **The limit:** it detects tampering; it doesn't prevent it. Someone with the deploy key could rewrite every entry after the one they changed, or drop the newest ones. Production closes that by copying the latest hash somewhere they can't write ([PRODUCTION.md](PRODUCTION.md)).
 
 **Secrets**
 
@@ -360,7 +366,7 @@ webhook-signature: v1,<base64 HMAC-SHA256(secret, "<id>.<timestamp>.<raw body>")
 **Hardening**
 
 14. **Abuse limits.** Per-user token-bucket rate limits on creating listings and requesting loans (`@convex-dev/rate-limiter`, evaluated inside the transaction). Length limits and control-character stripping on all text. Loans are capped at 30 days and at most 180 days ahead.
-15. **Headers.** A Content-Security-Policy via Clerk's middleware, allowing only the Convex origin plus Clerk; `frame-ancestors 'none'`, `nosniff`, a strict referrer policy, a locked-down Permissions-Policy, and HSTS in production.
+15. **A strict Content-Security-Policy.** A script runs only if it carries the nonce generated for that request, or was loaded by one that does (`'strict-dynamic'`). An injected `<script>` or `onclick=` therefore doesn't run, whatever host it points at. Clerk's middleware sets the policy in strict mode (its default would allow inline scripts and any `https:` host). Next.js puts the nonce on its own scripts, so every page renders per request: a page prerendered at build time couldn't carry one. Connections go only to the Convex deployment and Clerk. `frame-ancestors 'none'`, `object-src 'none'` and `base-uri 'self'` are also set. One allowance remains: inline _styles_, which Clerk's components need. The other headers are `nosniff`, a strict referrer policy, a locked-down Permissions-Policy, and HSTS in production.
 16. **n8n runs with only what these workflows use.** The nodes that run shell commands or read and write the container's files are excluded (`NODES_EXCLUDE`). Installing community packages from the editor is off, and so is the public REST API. The editor needs a login (bcrypt hash in env; no setup screen), and n8n telemetry is off.
 
 ### Your machine and the supply chain
@@ -373,8 +379,15 @@ A take-home runs on someone's own computer, next to their real accounts and keys
 20. **You run exactly what was tested.** Images are pinned by digest, npm packages by lockfile (`npm ci`), and CI actions by commit SHA.
 21. **No third-party code runs at install time.** `.npmrc` sets `ignore-scripts`. Install scripts are how compromised npm packages usually attack developers, as the Shai-Hulud worm did. The only dependency here with one is esbuild, and it works without it. CI checks every installed package against the registry (`npm run check:signatures`): its npm signature, plus its Sigstore publish and build-provenance attestations where it has them. A failure names the package and npm's reason on the run page. It runs on Node 26's npm, because npm before 11.11 aborts when a package's attestations arrive as keyless provenance only. When it went red on 2026-11-25, nothing had been tampered with: both packages it flagged (`napi-postinstall`, `convex-helpers`) have attestations that match Sigstore's public log exactly. The causes were that npm limitation and a race in npm's verifier on a cold cache, absorbed by one retry that can't pass a forged signature (details in [`scripts/check-signatures.mjs`](scripts/check-signatures.mjs)).
 22. **CI has nothing worth stealing.** It runs with a read-only token, doesn't keep git credentials after checkout, uses no secrets and no dependency cache, and has job timeouts. Dependabot keeps the pins current but waits until a release is a week old, since most malicious releases are pulled within days.
-23. **Patched as of 2026-11-25.** n8n 2.49.5 includes the fix for every n8n security advisory published so far, and `npm audit --omit=dev` reports no known vulnerabilities in the app's dependencies.
-24. **A clean exit.** `npm run stack:destroy -- --yes` removes the containers, volumes, images and generated secrets, then lists what only you can revoke (the Clerk app and any git token).
+23. **CI also looks for mistakes:**
+    - **Secrets:** Gitleaks scans every commit in the history for secrets. Its three allowances, each hand-checked, are in [`.gitleaks.toml`](.gitleaks.toml).
+    - **Code:** CodeQL scans the TypeScript and the workflow files themselves with its `security-extended` queries. That job's token can upload results and nothing else.
+    - **The CSP:** `npm run check:csp` serves the production build and fails if any page's policy stops being nonce-strict.
+
+    How to report a vulnerability: [SECURITY.md](SECURITY.md).
+
+24. **Patched as of 2026-11-25.** n8n 2.49.5 includes the fix for every n8n security advisory published so far, and `npm audit --omit=dev` reports no known vulnerabilities in the app's dependencies.
+25. **A clean exit.** `npm run stack:destroy -- --yes` removes the containers, volumes, images and generated secrets, then lists what only you can revoke (the Clerk app and any git token).
 
 ---
 
@@ -394,7 +407,9 @@ Every variable is documented in [`.env.example`](.env.example). Nothing has to b
 | `N8N_LOAN_EVENTS_WEBHOOK_URL`                                                                       | Convex env                  | no           | Where Convex sends loan events                         |
 | `LENDLOOP_CONVEX_TO_N8N_SECRET`                                                                     | Convex env + n8n credential | **yes**      | Signs Convex → n8n                                     |
 | `LENDLOOP_N8N_TO_CONVEX_SECRET` (`_PREVIOUS`)                                                       | Convex env + n8n credential | **yes**      | Signs n8n → Convex (rotation)                          |
+| `LENDLOOP_ADMIN_REQUIRE_MFA`                                                                        | Convex env                  | no           | `true`: admin functions need a second factor (prod)    |
 | `N8N_ENCRYPTION_KEY`, `N8N_RUNNERS_AUTH_TOKEN`, `CONVEX_INSTANCE_SECRET`, `N8N_OWNER_PASSWORD_HASH` | `docker/.env`               | **yes**      | Infrastructure                                         |
+| `LENDLOOP_REMINDER_SCHEDULE`                                                                        | shell, for `npm run setup`  | no           | Test hook: a cron schedule for the reminder workflow   |
 
 The Convex variables are declared and typed in `convex/convex.config.ts`. A deploy fails if a required one is missing, and code reads them through the typed `env`, never `process.env` (an ESLint rule enforces this).
 
@@ -402,16 +417,19 @@ The Convex variables are declared and typed in `convex/convex.config.ts`. A depl
 
 ## Testing
 
-| Command                         | What it covers                                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `npm test`                      | **36 Convex tests** (convex-test, edge runtime), listed below                                     |
-| `npm run smoke`                 | **14 checks against the running stack** (needs no Clerk), listed below                            |
-| `npm run check`                 | Types, lint (including Convex's ESLint rules), tests and the workflow-secrets check               |
-| CI (`.github/workflows/ci.yml`) | All of the above, a production build, then the full Docker stack with `setup`, `seed` and `smoke` |
+| Command                         | What it covers                                                                                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm test`                      | **43 Convex tests** (convex-test, edge runtime), listed below                                                                                                                                                      |
+| `npm run check:csp`             | After `npm run build`: every page's CSP is nonce-strict and every script carries the nonce                                                                                                                         |
+| `npm run smoke`                 | **14 checks against the running stack** (needs no Clerk), listed below                                                                                                                                             |
+| `npm run smoke -- --workflows`  | **7 more**: the reminder and error workflows run for real inside n8n (CI runs this)                                                                                                                                |
+| `npm run check`                 | Types, lint (including Convex's ESLint rules), tests and the workflow-secrets check                                                                                                                                |
+| CI (`.github/workflows/ci.yml`) | All of the above, a production build and its CSP, the npm signature check, a secret scan of the git history, then the full Docker stack with `setup`, `seed` and `smoke --workflows`. CodeQL runs in `codeql.yml`. |
 
 **What the Convex tests cover:**
 
-- Every role rule: visitor, unprovisioned, owner vs non-owner, every admin function refused for users.
+- Every role rule: visitor, unprovisioned, owner vs non-owner, every admin function refused for users, and the admin second-factor switch.
+- The audit hash chain: it verifies, and an edited, deleted or re-hashed entry is caught at the right place.
 - Input cleaning and rate limits.
 - The loan state machine, including overlaps and auto-declines.
 - Availability and overdue logic.
@@ -424,11 +442,20 @@ The Convex variables are declared and typed in `convex/convex.config.ts`. A depl
 
 **What the smoke test does:** it plays Convex against the live n8n webhook (unsigned, wrong key, replayed, tampered, valid, redelivered: exactly one email reaches Mailpit), then plays n8n against the live Convex endpoints.
 
-**Also verified by hand on the running stack:**
+**With `--workflows`** it also lets n8n do the work, as production executions:
 
-- The whole loop in the browser as two Clerk test users. A lender lists a tool and a borrower requests it, and the lender gets the email. The lender approves, and the borrower gets the email. The lender marks it returned, and the borrower gets a receipt. Each step shows on the loan's activity timeline. Then the admin page: marking a Trusted Lender, and the audit log.
-- The overdue workflow, run twice: one email, one `sent` record, nothing on the second run. It also fires on its own at 09:00.
-- Stopping Mailpit mid-notification: the webhook returns 500, the error workflow fires, and the incident appears in Convex.
+- **A real scheduled reminder run.** The run claims the seeded overdue loan, emails the borrower and writes back `sent`. A later run sends nothing more: one email, one attempt.
+- **A real failure.** The test stops Mailpit and sends a valid event. The notification run fails with a 5xx (so Convex would retry), the error workflow fires, and the incident appears in Convex with the node named and no email address.
+
+It needs the demo data and a one-minute reminder schedule, which is a test hook in the n8n bootstrap. In CI that looks like this:
+
+```bash
+LENDLOOP_REMINDER_SCHEDULE="* * * * *" npm run setup
+npm run seed
+npm run smoke -- --workflows
+```
+
+**Also verified by hand on the running stack:** the whole loop in the browser as two Clerk test users. A lender lists a tool and a borrower requests it, and the lender gets the email. The lender approves, and the borrower gets the email. The lender marks it returned, and the borrower gets a receipt. Each step shows on the loan's activity timeline. Then the admin page: marking a Trusted Lender, and the audit log.
 
 ---
 
@@ -450,8 +477,10 @@ convex/
 n8n/workflows/           exported workflow JSON (no secrets; checked in CI)
 n8n/bootstrap/           imports credentials + workflows into n8n on `docker compose up`
 docker/compose.yml       Convex backend + dashboard, n8n + task runner, Mailpit
-scripts/                 setup, teardown, smoke test, workflow export/check, make-admin
+scripts/                 setup, teardown, smoke test, workflow export/check, CSP and npm-signature checks, make-admin
 tests/convex/            convex-test suites
+.github/workflows/       ci.yml (checks, signatures, secret scan, full stack), codeql.yml
+SECURITY.md              how to report a vulnerability
 ```
 
 ---

@@ -118,11 +118,22 @@ export default defineSchema({
     .index("by_incidentKey", ["incidentKey"])
     .index("by_resolvedAt", ["resolvedAt"]),
 
-  /** Append-only record of who changed what. Never holds personal data, only ids. */
+  /**
+   * Append-only record of who changed what. Never holds personal data, only ids.
+   * A hash chain (model/audit.ts) makes edits and deletions detectable. The chain
+   * fields are optional only so entries written before it existed still load;
+   * every new entry has them.
+   */
   auditLog: defineTable({
     actorId: v.optional(v.id("users")),
     action: vAuditAction,
     targetId: v.string(),
     details: v.optional(v.string()),
-  }).index("by_targetId", ["targetId"]),
+    seq: v.optional(v.number()),
+    at: v.optional(v.number()),
+    prevHash: v.optional(v.string()),
+    hash: v.optional(v.string()),
+  })
+    .index("by_targetId", ["targetId"])
+    .index("by_seq", ["seq"]),
 });

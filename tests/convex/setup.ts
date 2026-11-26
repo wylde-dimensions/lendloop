@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
+import type { UserIdentity } from "convex/server";
 import { expect, vi } from "vitest";
 import rateLimiterTest from "@convex-dev/rate-limiter/test";
 import schema from "../../convex/schema";
@@ -41,7 +42,7 @@ export const BOB = person("bob", "Bob");
 export const CARA = person("cara", "Cara");
 export const ADMIN = person("admin", "Ada");
 
-export async function signIn(t: T, identity: ReturnType<typeof person>) {
+export async function signIn(t: T, identity: Partial<UserIdentity>) {
   const as = t.withIdentity(identity);
   await as.mutation(api.users.ensure, {});
   return as;

@@ -69,6 +69,17 @@ try {
     opsEmail: process.env.LENDLOOP_OPS_EMAIL || "ops@lendloop.example",
   };
 
+  // Test hook: CI sets this to "* * * * *" so the daily reminder workflow runs
+  // for real (as a production execution, error workflow included) within a minute.
+  // Unset everywhere else, which keeps the exported daily schedule.
+  const reminderSchedule = process.env.LENDLOOP_REMINDER_SCHEDULE?.trim();
+  if (reminderSchedule && !/^[\d*/,\- ]+$/.test(reminderSchedule)) {
+    console.error(
+      `[bootstrap] LENDLOOP_REMINDER_SCHEDULE must be a cron expression, got "${reminderSchedule}".`,
+    );
+    process.exit(1);
+  }
+
   const workflowsDir = join(work, "workflows");
   mkdirSync(workflowsDir);
   const ids = [];
@@ -77,9 +88,14 @@ try {
     .sort()) {
     const workflow = JSON.parse(readFileSync(join("/workflows", file), "utf8"));
     for (const node of workflow.nodes) {
-      if (node.name !== "Config") continue;
-      for (const assignment of node.parameters?.assignments?.assignments ?? []) {
-        if (assignment.name in config) assignment.value = config[assignment.name];
+      if (node.name === "Config") {
+        for (const assignment of node.parameters?.assignments?.assignments ?? []) {
+          if (assignment.name in config) assignment.value = config[assignment.name];
+        }
+      }
+      if (reminderSchedule && node.type === "n8n-nodes-base.scheduleTrigger") {
+        node.parameters.rule = { interval: [{ field: "cronExpression", expression: reminderSchedule }] };
+        console.log(`[bootstrap] "${workflow.name}" scheduled at "${reminderSchedule}" (test override)`);
       }
     }
     writeFileSync(join(workflowsDir, file), JSON.stringify(workflow));

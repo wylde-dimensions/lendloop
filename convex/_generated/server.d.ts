@@ -31,6 +31,7 @@ type Env = {
   readonly CONVEX_CLOUD_URL: string;
   readonly CONVEX_SITE_URL: string;
   readonly CLERK_FRONTEND_API_URL: string;
+  readonly LENDLOOP_ADMIN_REQUIRE_MFA: string | undefined;
   readonly LENDLOOP_APP_URL: string | undefined;
   readonly LENDLOOP_CONVEX_TO_N8N_SECRET: string | undefined;
   readonly LENDLOOP_N8N_TO_CONVEX_SECRET: string | undefined;

@@ -5,6 +5,15 @@ import { ADMIN, ALICE, BOB, expectAppError, freezeTime, listTool, makeAdmin, set
 beforeEach(() => freezeTime());
 afterEach(() => vi.useRealTimers());
 
+const adaId = (t: ReturnType<typeof setup>) =>
+  t.run(
+    async (ctx) =>
+      (await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", ADMIN.email))
+        .unique())!._id,
+  );
+
 describe("signed-out visitors", () => {
   test("see only the name and category of available tools", async () => {
     const t = setup();
@@ -45,6 +54,7 @@ describe("account provisioning", () => {
       firstName: "Bob",
       role: "user",
       isTrustedLender: false,
+      adminNeedsMfa: false,
     });
     const stored = await t.run(async (ctx) => await ctx.db.query("users").first());
     expect(stored?.email).toBeUndefined();
@@ -147,6 +157,46 @@ describe("admin role", () => {
       expect.arrayContaining(["user.role_changed", "user.trusted_lender_granted", "tool.removed_by_admin"]),
     );
     expect(log.find((entry) => entry.action === "tool.removed_by_admin")?.actor).toBe("Ada");
+  });
+
+  test("with LENDLOOP_ADMIN_REQUIRE_MFA on, admin functions need a session that passed a second factor", async () => {
+    vi.stubEnv("LENDLOOP_ADMIN_REQUIRE_MFA", "true");
+    try {
+      const t = setup();
+      await signIn(t, ADMIN);
+      await makeAdmin(t, ADMIN.email);
+
+      // Clerk's fva claim: [minutes since first factor, minutes since second factor]; -1 = never.
+      for (const fva of [undefined, [3, -1], "3,1", [3]]) {
+        const admin = t.withIdentity({ ...ADMIN, fva });
+        await expectAppError(admin.query(api.admin.auditLog, {}), "MFA_REQUIRED");
+        await expectAppError(
+          admin.mutation(api.admin.setTrustedLender, { userId: await adaId(t), trusted: true }),
+          "MFA_REQUIRED",
+        );
+        expect((await admin.query(api.users.me, {}))?.adminNeedsMfa).toBe(true);
+      }
+
+      const verified = t.withIdentity({ ...ADMIN, fva: [30, 2] });
+      await expect(verified.query(api.admin.auditLog, {})).resolves.toBeTruthy();
+      expect((await verified.query(api.users.me, {}))?.adminNeedsMfa).toBe(false);
+
+      // Regular users are told FORBIDDEN, MFA or not; the flag is only for admins.
+      const alice = await signIn(t, { ...ALICE, fva: [1, 1] });
+      await expectAppError(alice.query(api.admin.auditLog, {}), "FORBIDDEN");
+      expect((await t.withIdentity(ALICE).query(api.users.me, {}))?.adminNeedsMfa).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("with the setting off (local default), admins don't need a second factor", async () => {
+    const t = setup();
+    await signIn(t, ADMIN);
+    await makeAdmin(t, ADMIN.email);
+    const admin = t.withIdentity({ ...ADMIN, fva: [3, -1] });
+    await expect(admin.query(api.admin.auditLog, {})).resolves.toBeTruthy();
+    expect((await admin.query(api.users.me, {}))?.adminNeedsMfa).toBe(false);
   });
 
   test("the role can only be changed by an internal function", async () => {
