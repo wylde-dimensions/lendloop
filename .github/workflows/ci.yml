@@ -44,7 +44,11 @@ jobs:
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
           NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: "true"
       # Serves the build and fails if any page's CSP stops being nonce-strict.
+      # Clerk's middleware refuses to start without a secret key; signed-out pages
+      # never use it, so a placeholder that isn't a key at all is enough.
       - run: npm run check:csp
+        env:
+          CLERK_SECRET_KEY: sk_test_placeholder_not_a_real_key
 
   secrets:
     name: Secret scan (full git history)

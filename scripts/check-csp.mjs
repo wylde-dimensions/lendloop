@@ -19,13 +19,19 @@ const ORIGIN = `http://localhost:${PORT}`;
 
 const nextBin = createRequire(import.meta.url).resolve("next/dist/bin/next");
 const server = spawn(process.execPath, [nextBin, "start", "-H", "localhost", "-p", String(PORT)], {
-  stdio: ["ignore", "ignore", "inherit"],
+  stdio: ["ignore", "ignore", "pipe"],
+});
+// Keep the server's errors: they usually say why a page failed.
+let serverErrors = "";
+server.stderr.on("data", (chunk) => {
+  process.stderr.write(chunk);
+  if (serverErrors.length < 4000) serverErrors += chunk;
 });
 
-let failures = 0;
+const failed = [];
 function check(name, ok, detail = "") {
   console.log(`${ok ? "✔" : "✘"} ${name}${!ok && detail ? `\n    ${detail}` : ""}`);
-  if (!ok) failures++;
+  if (!ok) failed.push(detail ? `${name}: ${String(detail).slice(0, 300)}` : name);
 }
 
 const directives = (csp) =>
@@ -86,5 +92,15 @@ try {
   server.kill();
 }
 
-console.log(failures ? `\n${failures} check(s) failed.` : "\nThe CSP is strict on every page checked.");
-process.exit(failures ? 1 : 0);
+if (failed.length === 0) {
+  console.log("\nThe CSP is strict on every page checked.");
+  process.exit(0);
+}
+console.log(`\n${failed.length} check(s) failed.`);
+// On GitHub, also as an annotation on the run page (readable without opening the log).
+if (process.env.GITHUB_ACTIONS === "true") {
+  const escape = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  const errors = serverErrors.trim() ? `\n\nServer errors:\n${serverErrors.trim().slice(0, 1500)}` : "";
+  console.log(`::error title=CSP check failed::${escape(failed.join("\n") + errors)}`);
+}
+process.exit(1);
